@@ -6,16 +6,6 @@
 # Note: Lambda functions automatically create log groups when they run, but we
 # explicitly create them here to set retention policies before the first execution.
 
-# Scheduled Workflow Lambda
-resource "aws_cloudwatch_log_group" "scheduled_workflow_lambda" {
-  name              = "/aws/lambda/${aws_lambda_function.scheduled_workflow_lambda.function_name}"
-  retention_in_days = 30
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
 # Job Get Lambda
 resource "aws_cloudwatch_log_group" "job_get_lambda" {
   name              = "/aws/lambda/${aws_lambda_function.job_get_lambda.function_name}"
@@ -69,16 +59,6 @@ resource "aws_cloudwatch_log_group" "websocket_connect_lambda" {
 # WebSocket Disconnect Lambda
 resource "aws_cloudwatch_log_group" "websocket_disconnect_lambda" {
   name              = "/aws/lambda/${aws_lambda_function.websocket_disconnect_lambda.function_name}"
-  retention_in_days = 30
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-# OAuth Callback Lambda
-resource "aws_cloudwatch_log_group" "oauth_callback_lambda" {
-  name              = "/aws/lambda/${aws_lambda_function.oauth_callback_lambda.function_name}"
   retention_in_days = 30
 
   lifecycle {

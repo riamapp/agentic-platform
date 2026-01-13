@@ -13,7 +13,7 @@ variable "agent_runtime_version" {
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
-  default     = "eu-west-1"
+  default     = "us-west-2"
 }
 
 variable "cognito_user_pool_id" {
@@ -32,7 +32,7 @@ variable "cognito_m2m_client_id" {
 }
 
 variable "cognito_domain_url" {
-  description = "Full Cognito domain URL from agentic-auth outputs (e.g. https://prefix.auth.eu-west-1.amazoncognito.com)"
+  description = "Full Cognito domain URL from agentic-auth outputs (e.g. https://prefix.auth.us-west-2.amazoncognito.com)"
   type        = string
 }
 

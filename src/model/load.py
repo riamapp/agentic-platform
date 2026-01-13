@@ -46,7 +46,8 @@ if not logger.handlers:
 # Claude Sonnet 3.5 (supports tool calling):
 # This model supports tool calling which is required for browser and code interpreter tools
 # Use inference profile ID for on-demand throughput (required format)
-MODEL_ID = "eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
+# Note: Region prefix should match your deployment region (us. for us-west-2, eu. for eu-west-1, etc.)
+MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 def load_model() -> str:
     """

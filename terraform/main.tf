@@ -11,7 +11,7 @@ terraform {
 
 provider "aws" {
   region  = var.aws_region
-  profile = "AdministratorAccess-253490754184"
+  profile = "default"
 }
 
 # API Gateway outputs are now defined in api_gateway.tf

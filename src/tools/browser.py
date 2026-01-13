@@ -68,7 +68,7 @@ class BrowserTool:
             identifier: Browser identifier (defaults to "aws.browser.v1")
             session_timeout: Session timeout in seconds (default: 3600)
         """
-        self.region = region or "us-east-1"
+        self.region = region or "us-west-2"
         self.identifier = identifier or "aws.browser.v1"
         self.session_timeout = session_timeout
         self._sessions: Dict[str, BrowserSession] = {}

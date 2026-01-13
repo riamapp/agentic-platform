@@ -52,7 +52,7 @@ class CodeInterpreterTool:
             auto_create: Automatically create sessions if they don't exist
             persist_sessions: Prevent session cleanup on object destruction
         """
-        self.region = region or "us-east-1"
+        self.region = region or "us-west-2"
         self.identifier = identifier or "aws.codeinterpreter.v1"
         self.auto_create = auto_create
         self.persist_sessions = persist_sessions

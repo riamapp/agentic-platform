@@ -42,7 +42,7 @@ resource "null_resource" "docker_image" {
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
     environment = {
-      AWS_PROFILE = "AdministratorAccess-253490754184"
+      AWS_PROFILE = "default"
       VERSION_TAG = local.src_hash
     }
     command = <<EOF
@@ -53,7 +53,7 @@ resource "null_resource" "docker_image" {
         exit 1
       fi
 
-      aws ecr get-login-password --profile AdministratorAccess-253490754184 | docker login --username AWS --password-stdin ${data.aws_ecr_authorization_token.token.proxy_endpoint}
+      aws ecr get-login-password --profile default | docker login --username AWS --password-stdin ${data.aws_ecr_authorization_token.token.proxy_endpoint}
 
       IMAGE_URI=${aws_ecr_repository.agentcore_terraform_runtime.repository_url}
 
@@ -220,24 +220,6 @@ resource "aws_bedrockagentcore_gateway" "agentcore_gateway" {
     }
   }
 }
-
-resource "aws_bedrockagentcore_gateway_target" "agentcore_gateway_lambda_target" {
-  name               = "${var.app_name}-Target"
-  gateway_identifier = aws_bedrockagentcore_gateway.agentcore_gateway.gateway_id
-
-  credential_provider_configuration {
-    gateway_iam_role {}
-  }
-
-  target_configuration {
-    mcp {
-      lambda {
-        lambda_arn = aws_lambda_function.mcp_lambda.arn
-      }
-    }
-  }
-}
-
 
 ################################################################################
 # AgentCore Runtime IAM Roles
