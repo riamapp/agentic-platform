@@ -1,0 +1,31 @@
+#!/bin/bash
+# Terraform wrapper script that ensures Lambda packages exist before running Terraform
+# Uses incremental builds - only rebuilds what changed
+# Usage: ./tf [terraform-command] [terraform-args...]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+  echo "Error: Docker is not running. Please start Docker and try again." >&2
+  exit 1
+fi
+
+# Build Lambda packages incrementally (only what changed) in parallel
+# This is much faster than rebuilding everything
+cd "$PROJECT_ROOT"
+if ! make -j$(nproc 2>/dev/null || echo 4) all-lambda-zip 2>&1; then
+  # Fallback to sequential if parallel fails, but show errors this time
+  echo "Parallel build failed, trying sequential build..." >&2
+  if ! make all-lambda-zip; then
+    echo "Error: Failed to build Lambda packages. See errors above." >&2
+    exit 1
+  fi
+fi
+
+# Run Terraform with the provided arguments
+cd "$SCRIPT_DIR"
+exec terraform "$@"
