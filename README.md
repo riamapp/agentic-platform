@@ -14,7 +14,7 @@ Before using your generated project in a production environment, consult the fol
 
 # Layout
 
-There are three main directories created in this project: `src`, `mcp`, and `terraform`. In a monorepo setup all of the code—source, test, and IaC for deployment—is contained in one repository. Everything needed to
+There are two main directories created in this project: `src` and `terraform`. In a monorepo setup all of the code—source, test, and IaC for deployment—is contained in one repository. Everything needed to
 define runtime code and deploy it into your AWS account is contained in this project.
 
 The `terraform` directory models all of the Bedrock AgentCore and related resources. There are direct references between `terraform` and the runtime `src/`. For example, the IaC code expects to find the
@@ -31,17 +31,6 @@ Start with main entrypoint to the generated app, `src/main.py`. This file define
 def invoke(payload):
     # assume payload input is structured as { "prompt": "<user input>" }
 ```
-
-Next there is the `src/mcp_client` directory. Here you will find `client.py`. This file defines an MCP client from the chosen Strands library. That client points to the
-gateway URL for the AgentCore gateway that is modeled in the `terraform` directory. Behind that gateway is a custom MCP tool modeled as a Lambda function (see below `mcp/` section for more details).
-The authorizer for the gateway is a Cognito app client that is modeled in the `terraform` directory. A call using
-the client_credentials flow is defined in `_get_access_token()`.
-
-## mcp/
-
-The `mcp/` directory defines a simple Python tool that meets the MCP specification called `placeholder_tool`. The specification for the tool's inputs is defined in the inline schema in the modeled
-`terraform` directory. When replacing the dummy implementation in `mcp/lambda/handler.py`, make sure to update the corresponding Lambda target schema to reflect the changes before re-deploying.
-The `placeholder_tool` implementation demonstrates the tool name and input payload conventions of a Lambda behind the gateway. The gateway supports [flexible target types](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-add-target-api.html).
 
 ## terraform/
 
@@ -124,7 +113,7 @@ The two easiest ways to invoke your runtime after deploying:
 
 # Local Testing
 
-You can test the agent locally before deploying to AWS. Local testing uses the `LOCAL_DEV` environment variable to bypass the MCP Gateway connection.
+You can test the agent locally before deploying to AWS. Local testing uses the `LOCAL_DEV` environment variable.
 
 ## Prerequisites
 
@@ -160,8 +149,7 @@ You can test the agent locally before deploying to AWS. Local testing uses the `
 ## What Works Locally
 
 - ✅ Agent conversation with Claude Sonnet 4.5
-- ✅ Built-in tools (code interpreter)
-- ❌ MCP Gateway tools (bypassed in LOCAL_DEV mode)
+- ✅ Built-in tools (code interpreter, browser)
 - ❌ AgentCore Memory (requires deployed infrastructure)
 
    - Less code to maintain

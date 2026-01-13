@@ -430,7 +430,6 @@ class AgentLoop:
                             # Tool input from Bedrock is already in the correct format
                             # For code_interpreter: {"code_interpreter_input": {"action": {...}}}
                             # For browser: {"browser_input": {"action": {...}}}
-                            # For MCP tools: direct arguments
                             tool_result = self.tool_registry.execute_tool(tool_name, tool_input)
                             formatted_content = self._format_tool_result(tool_result)
                             

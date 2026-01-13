@@ -14,7 +14,6 @@ if [ ! -t 0 ]; then
 fi
 
 # Build all Lambda packages (output to stderr so it doesn't interfere with JSON output)
-make mcp-lambda-zip >&2
 make api-lambda-zip >&2
 make job-submit-lambda-zip >&2
 make job-worker-lambda-zip >&2
@@ -24,8 +23,7 @@ make websocket-connect-lambda-zip >&2
 make websocket-disconnect-lambda-zip >&2
 
 # Calculate a hash of all zip files to ensure they're built
-if [ -f "build/mcp_lambda.zip" ] && \
-   [ -f "build/api_lambda.zip" ] && \
+if [ -f "build/api_lambda.zip" ] && \
    [ -f "build/job_submit_lambda.zip" ] && \
    [ -f "build/job_worker_lambda.zip" ] && \
    [ -f "build/job_get_lambda.zip" ] && \

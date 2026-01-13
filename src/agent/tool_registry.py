@@ -17,7 +17,7 @@ class ToolRegistry:
     """
     Registry for tools that can be called by the Bedrock agent.
     
-    Handles both native tools (code_interpreter, browser) and MCP tools.
+    Handles native tools (code_interpreter, browser).
     """
     
     def __init__(self):
@@ -217,36 +217,4 @@ class ToolRegistry:
             }
         }
     
-    def create_mcp_tool_schema(self, mcp_tool: Any) -> Dict[str, Any]:
-        """
-        Create schema for an MCP tool.
-        
-        MCP tools should have name, description, and inputSchema attributes.
-        """
-        try:
-            # Try to get schema from MCP tool
-            if hasattr(mcp_tool, 'name') and hasattr(mcp_tool, 'description') and hasattr(mcp_tool, 'inputSchema'):
-                return {
-                    "description": mcp_tool.description or "",
-                    "inputSchema": mcp_tool.inputSchema if isinstance(mcp_tool.inputSchema, dict) else {}
-                }
-            elif hasattr(mcp_tool, '__dict__'):
-                # Try to extract from __dict__
-                tool_dict = mcp_tool.__dict__
-                return {
-                    "description": tool_dict.get("description", ""),
-                    "inputSchema": tool_dict.get("inputSchema", {})
-                }
-            else:
-                logger.warning(f"Could not extract schema from MCP tool: {type(mcp_tool)}")
-                return {
-                    "description": "MCP tool",
-                    "inputSchema": {"type": "object", "properties": {}}
-                }
-        except Exception as e:
-            logger.error(f"Error creating MCP tool schema: {e}")
-            return {
-                "description": "MCP tool",
-                "inputSchema": {"type": "object", "properties": {}}
-            }
 

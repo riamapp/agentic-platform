@@ -13,7 +13,6 @@ from boto3.dynamodb.conditions import Key
 
 from bedrock_agentcore import BedrockAgentCoreApp
 from bedrock_agentcore.memory import MemoryClient
-from .mcp_client.client import get_streamable_http_mcp_client
 from .model.load import load_model
 from .model.schemas import get_schema, get_pydantic_model, list_available_schemas
 from .tools.code_interpreter import CodeInterpreterTool
@@ -49,19 +48,6 @@ if not logger.handlers:
 MEMORY_ID = os.getenv("MEMORY_ID")
 REGION = os.getenv("AWS_REGION")
 CONVERSATION_TABLE = os.getenv("CONVERSATION_TABLE")
-
-# Factory that returns a *fresh* MCP client context manager for each turn.
-if os.getenv("LOCAL_DEV") == "1":
-    # In local dev, instantiate dummy MCP client so the code runs without deploying.
-    from contextlib import nullcontext
-    from types import SimpleNamespace
-
-    def get_mcp_client_context():
-        return nullcontext(SimpleNamespace(list_tools_sync=lambda: []))
-else:
-    # In runtime, create a new Streamable HTTP MCP client per turn.
-    def get_mcp_client_context():
-        return get_streamable_http_mcp_client()
 
 # In-memory transcripts keyed by session_id.
 _TRANSCRIPTS: Dict[str, List[Dict[str, str]]] = {}
@@ -116,8 +102,6 @@ async def invoke(payload, context):
     # Log userId for debugging
     if user_id:
         logger.info(f"Received userId in payload: ...{user_id[-4:]}")
-    else:
-        logger.warning("No userId found in payload - MCP tools requiring userId may fail")
     
     # Log frontendIdentifier for debugging
     if frontend_identifier:
@@ -243,195 +227,92 @@ async def invoke(payload, context):
 
     assistant_chunks: List[str] = []
 
-    # Open MCP client context for the full duration of the tool execution.
     try:
-        async with get_mcp_client_context() as client:
-            logger.info("Attempting to list MCP tools...")
-            mcp_tools = await client.list_tools()
-            logger.info(f"MCP tools list returned: {len(mcp_tools) if mcp_tools else 0} tools")
-            if mcp_tools:
-                tool_names = [getattr(tool, 'name', str(tool)) for tool in mcp_tools]
-                logger.info(f"MCP tool names: {tool_names}")
-            else:
-                logger.warning("No MCP tools found - MCP client may not be configured correctly or gateway may not be accessible")
-
-            # Create tool registry
-            tool_registry = ToolRegistry()
+        # Create tool registry
+        tool_registry = ToolRegistry()
+        
+        # Register code interpreter tool
+        if code_interpreter_tool:
+            tool_registry.register_tool(
+                "code_interpreter",
+                code_interpreter_tool.code_interpreter,
+                tool_registry.create_code_interpreter_schema()
+            )
+            logger.info("Registered code_interpreter tool")
+        
+        # Register browser tool (browser tool has fixes built-in)
+        if browser_tool:
+            tool_registry.register_tool(
+                "browser",
+                browser_tool.browser,
+                tool_registry.create_browser_schema()
+            )
+            logger.info("Registered browser tool")
+        
+        logger.info(f"Total tools registered: {len(tool_registry._tools)}")
+        
+        # Get current date/time for context
+        current_datetime = datetime.now(timezone.utc)
+        current_date_str = current_datetime.strftime("%Y-%m-%d")
+        current_time_str = current_datetime.strftime("%H:%M:%S UTC")
+        current_datetime_iso = current_datetime.isoformat().replace('+00:00', 'Z')
+        
+        # Build system prompt based on output mode
+        if output_mode == "structured":
+            # Get the schema definition to include in the prompt
+            schema_json = None
+            if output_schema_name:
+                try:
+                    schema_dict = get_schema(output_schema_name)
+                    schema_json = json_module.dumps(schema_dict, indent=2)
+                    logger.info(f"Including schema definition for {output_schema_name} in system prompt")
+                except Exception as e:
+                    logger.warning(f"Failed to get schema for prompt: {e}")
             
-            # Register code interpreter tool
-            if code_interpreter_tool:
-                tool_registry.register_tool(
-                    "code_interpreter",
-                    code_interpreter_tool.code_interpreter,
-                    tool_registry.create_code_interpreter_schema()
-                )
-                logger.info("Registered code_interpreter tool")
-            
-            # Register browser tool (browser tool has fixes built-in)
-            if browser_tool:
-                tool_registry.register_tool(
-                    "browser",
-                    browser_tool.browser,
-                    tool_registry.create_browser_schema()
-                )
-                logger.info("Registered browser tool")
-            
-            # Register MCP tools
-            # MCP tools from the gateway need to be called through the MCP client
-            # Store reference to client for tool execution
-            mcp_client_ref = client
-            
-            for mcp_tool in mcp_tools:
-                tool_name = None
-                tool_schema = None
-                
-                # Extract tool name and schema from MCP tool
-                if hasattr(mcp_tool, 'name'):
-                    tool_name = mcp_tool.name
-                elif hasattr(mcp_tool, '__name__'):
-                    tool_name = mcp_tool.__name__
-                else:
-                    tool_name = str(type(mcp_tool).__name__)
-                
-                # Extract schema
-                if hasattr(mcp_tool, 'inputSchema'):
-                    tool_schema = {
-                        "description": getattr(mcp_tool, 'description', 'MCP tool'),
-                        "inputSchema": mcp_tool.inputSchema if isinstance(mcp_tool.inputSchema, dict) else {}
-                    }
-                else:
-                    tool_schema = tool_registry.create_mcp_tool_schema(mcp_tool)
-                
-                # Create a wrapper function for MCP tools that calls through MCP client
-                # Note: We're in an async context (invoke is async), so we can use await
-                def make_mcp_tool_func(tool, name, mcp_client, injected_user_id, injected_frontend_identifier):
-                    async def mcp_tool_func_async(arguments: Dict[str, Any]) -> Dict[str, Any]:
-                        try:
-                            # Log the arguments being passed to the tool (before injection)
-                            if isinstance(arguments, dict):
-                                logger.info(f"MCP tool '{name}' called with arguments: {json_module.dumps(arguments, default=str)}")
-                            
-                            # Inject userId and frontendIdentifier into arguments if not already present
-                            # This ensures MCP tools always have access to these values
-                            if isinstance(arguments, dict):
-                                if injected_user_id and "userId" not in arguments:
-                                    arguments["userId"] = injected_user_id
-                                if injected_frontend_identifier and "frontendIdentifier" not in arguments:
-                                    arguments["frontendIdentifier"] = injected_frontend_identifier
-                                
-                                # Log after injection
-                                logger.info(f"MCP tool '{name}' arguments after injection: {json_module.dumps(arguments, default=str)}")
-                            
-                            # Try to call tool through MCP client (async)
-                            if hasattr(mcp_client, 'call_tool'):
-                                result = await mcp_client.call_tool(name, arguments)
-                            elif hasattr(mcp_client._client, 'call_tool'):
-                                # Check if it's async
-                                import inspect
-                                if inspect.iscoroutinefunction(mcp_client._client.call_tool):
-                                    result = await mcp_client._client.call_tool(name, arguments)
-                                else:
-                                    result = mcp_client._client.call_tool(name, arguments)
-                            elif hasattr(tool, 'call'):
-                                if inspect.iscoroutinefunction(tool.call):
-                                    result = await tool.call(arguments)
-                                else:
-                                    result = tool.call(arguments)
-                            elif callable(tool):
-                                if inspect.iscoroutinefunction(tool):
-                                    result = await tool(arguments)
-                                else:
-                                    result = tool(arguments)
-                            else:
-                                return {"status": "error", "content": [{"text": f"MCP tool {name} is not callable"}]}
-                            
-                            # Convert result to standard format
-                            if isinstance(result, dict):
-                                return result
-                            else:
-                                return {"status": "success", "content": [{"text": str(result)}]}
-                        except Exception as e:
-                            logger.error(f"Error executing MCP tool {name}: {e}", exc_info=True)
-                            return {"status": "error", "content": [{"text": f"Error executing MCP tool: {str(e)}"}]}
+            schema_instructions = ""
+            if schema_json:
+                schema_instructions = f"""
                     
-                    # Return async function - tool registry will need to handle it
-                    return mcp_tool_func_async
-                
-                tool_registry.register_tool(
-                    tool_name,
-                    make_mcp_tool_func(mcp_tool, tool_name, mcp_client_ref, user_id, frontend_identifier),
-                    tool_schema
-                )
-                logger.info(f"Registered MCP tool: {tool_name}")
+                    You MUST respond with a valid JSON object that matches this exact schema:
+                    {schema_json}
+                    
+                    IMPORTANT: 
+                    - Your entire response must be a valid JSON object matching the schema above
+                    - Include ALL required fields
+                    - Do NOT include any text before or after the JSON object
+                    - Do NOT wrap the JSON in markdown code blocks
+                    - Return only the JSON object itself
+                """
             
-            logger.info(f"Total tools registered: {len(tool_registry._tools)}")
-            
-            # Get current date/time for context
-            current_datetime = datetime.now(timezone.utc)
-            current_date_str = current_datetime.strftime("%Y-%m-%d")
-            current_time_str = current_datetime.strftime("%H:%M:%S UTC")
-            current_datetime_iso = current_datetime.isoformat().replace('+00:00', 'Z')
-            
-            # Build system prompt based on output mode
-            if output_mode == "structured":
-                # Get the schema definition to include in the prompt
-                schema_json = None
-                if output_schema_name:
-                    try:
-                        schema_dict = get_schema(output_schema_name)
-                        schema_json = json_module.dumps(schema_dict, indent=2)
-                        logger.info(f"Including schema definition for {output_schema_name} in system prompt")
-                    except Exception as e:
-                        logger.warning(f"Failed to get schema for prompt: {e}")
-                
-                schema_instructions = ""
-                if schema_json:
-                    schema_instructions = f"""
-                        
-                        You MUST respond with a valid JSON object that matches this exact schema:
-                        {schema_json}
-                        
-                        IMPORTANT: 
-                        - Your entire response must be a valid JSON object matching the schema above
-                        - Include ALL required fields
-                        - Do NOT include any text before or after the JSON object
-                        - Do NOT wrap the JSON in markdown code blocks
-                        - Return only the JSON object itself
-                    """
-                
-                system_prompt_base = f"""
-                        You are a workflow execution agent that returns structured responses.
-                        
-                        Current date and time: {current_date_str} {current_time_str} (ISO 8601: {current_datetime_iso})
-                        When the user says "today", "now", or refers to the current date/time, use the current date/time shown above.
-                        
-                        You have access to tools from multiple sources:
-                        - Standard function tools (like code_interpreter, browser) - these are Python functions defined with @tool decorator
-                        - MCP (Model Context Protocol) tools - these are standardized tools exposed through the Bedrock AgentCore MCP Gateway.
-                        
-                        IMPORTANT - Code Interpreter Usage:
-                        The code_interpreter tool runs in an isolated sandbox that CANNOT make HTTP requests or access external APIs.
-                        When you need to analyze data from external sources:
-                        1. FIRST: Use the appropriate tool to fetch the data
-                        2. THEN: Pass the fetched data to the code_interpreter as input (e.g., write it to a file, or include it in your code as a variable)
-                        3. Finally: Use code_interpreter to analyze the data that was provided to it
-                        
-                        Do NOT attempt to make HTTP requests or call APIs from within code_interpreter code.
-                        Do NOT try to use requests.get(), urllib, or similar libraries in code_interpreter - they will fail or timeout.
-                        
-                        Use tools as needed to gather information, then format the results according to the required schema.{schema_instructions}
-                    """
-            else:
-                # Chat mode: natural language responses
-                system_prompt_base = f"""
+            system_prompt_base = f"""
+                    You are a workflow execution agent that returns structured responses.
+                    
+                    Current date and time: {current_date_str} {current_time_str} (ISO 8601: {current_datetime_iso})
+                    When the user says "today", "now", or refers to the current date/time, use the current date/time shown above.
+                    
+                    You have access to standard function tools (like code_interpreter, browser) - these are Python functions defined with @tool decorator.
+                    
+                    IMPORTANT - Code Interpreter Usage:
+                    The code_interpreter tool runs in an isolated sandbox that CANNOT make HTTP requests or access external APIs.
+                    When you need to analyze data from external sources:
+                    1. FIRST: Use the appropriate tool to fetch the data
+                    2. THEN: Pass the fetched data to the code_interpreter as input (e.g., write it to a file, or include it in your code as a variable)
+                    3. Finally: Use code_interpreter to analyze the data that was provided to it
+                    
+                    Do NOT attempt to make HTTP requests or call APIs from within code_interpreter code.
+                    Do NOT try to use requests.get(), urllib, or similar libraries in code_interpreter - they will fail or timeout.
+                    
+                    Use tools as needed to gather information, then format the results according to the required schema.{schema_instructions}
+                """
+        else:
+            # Chat mode: natural language responses
+            system_prompt_base = f"""
                         You are a helpful assistant with code execution and web browsing capabilities. Use tools when appropriate.
                         
                         Current date and time: {current_date_str} {current_time_str} (ISO 8601: {current_datetime_iso})
                         When the user says "today", "now", or refers to the current date/time, use the current date/time shown above.
                         
-                        You have access to tools from multiple sources:
-                        - Standard function tools (like code_interpreter, browser) - these are Python functions defined with @tool decorator
-                        - MCP (Model Context Protocol) tools - these are standardized tools exposed through the Bedrock AgentCore MCP Gateway.
+                        You have access to standard function tools (like code_interpreter, browser) - these are Python functions defined with @tool decorator.
                         
                         IMPORTANT - Code Interpreter Usage:
                         The code_interpreter tool runs in an isolated sandbox that CANNOT make HTTP requests or access external APIs.
@@ -443,192 +324,192 @@ async def invoke(payload, context):
                         Do NOT attempt to make HTTP requests or call APIs from within code_interpreter code.
                         Do NOT try to use requests.get(), urllib, or similar libraries in code_interpreter - they will fail or timeout.
                         
-                        When asked about your tools or architecture, you should accurately describe which tools are MCP tools (exposed via the MCP Gateway) versus standard function tools.
+                        When asked about your tools or architecture, you should accurately describe the available tools.
                     """
-            
-            # Load model based on output mode
-            pydantic_model = None
-            model_id = load_model()  # Always load model (same for both modes)
-            
-            if output_mode == "structured":
-                logger.info("Loading structured output configuration")
-                try:
-                    # Use pre-generated Pydantic model from registry
-                    pydantic_model = get_pydantic_model(output_schema_name)
-                    logger.info(f"Retrieved pre-generated Pydantic model for schema: {output_schema_name}")
-                except ValueError as e:
-                    # Re-raise ValueError as-is (already has good error message)
-                    raise
-                except Exception as e:
-                    logger.error(f"Failed to get Pydantic model for structured output: {e}", exc_info=True)
-                    raise ValueError(
-                        f"Failed to get Pydantic model for structured output: {e}. "
-                        "Please ensure the outputSchemaName is valid."
-                    ) from e
+        
+        # Load model based on output mode
+        pydantic_model = None
+        model_id = load_model()  # Always load model (same for both modes)
+        
+        if output_mode == "structured":
+            logger.info("Loading structured output configuration")
+            try:
+                # Use pre-generated Pydantic model from registry
+                pydantic_model = get_pydantic_model(output_schema_name)
+                logger.info(f"Retrieved pre-generated Pydantic model for schema: {output_schema_name}")
+            except ValueError as e:
+                # Re-raise ValueError as-is (already has good error message)
+                raise
+            except Exception as e:
+                logger.error(f"Failed to get Pydantic model for structured output: {e}", exc_info=True)
+                raise ValueError(
+                    f"Failed to get Pydantic model for structured output: {e}. "
+                    "Please ensure the outputSchemaName is valid."
+                ) from e
 
-            logger.debug(f"model_id: {model_id}")
-            logger.debug(f"system_prompt_base: {system_prompt_base}")
-            logger.debug(f"tool_registry tools: {list(tool_registry._tools.keys())}")
-            
-            # Create agent loop
-            agent_loop = AgentLoop(
-                model_id=model_id,
-                region=REGION,
-                tool_registry=tool_registry,
-                system_prompt=system_prompt_base,
-                memory_client=_MEMORY_CLIENT,
-            )
-            
-            logger.info("AgentLoop initialized successfully")
+        logger.debug(f"model_id: {model_id}")
+        logger.debug(f"system_prompt_base: {system_prompt_base}")
+        logger.debug(f"tool_registry tools: {list(tool_registry._tools.keys())}")
+        
+        # Create agent loop
+        agent_loop = AgentLoop(
+            model_id=model_id,
+            region=REGION,
+            tool_registry=tool_registry,
+            system_prompt=system_prompt_base,
+            memory_client=_MEMORY_CLIENT,
+        )
+        
+        logger.info("AgentLoop initialized successfully")
 
-            # Execute and stream response using the agent loop
-            # Convert conversation history to format expected by agent loop
-            conversation_history = [
-                {"role": turn["role"], "content": turn["content"]}
-                for turn in history_turns
-            ]
-            
-            if output_mode == "structured" and pydantic_model:
-                # Structured output mode - accumulate all chunks, then yield final JSON
-                logger.info("Using structured output mode")
+        # Execute and stream response using the agent loop
+        # Convert conversation history to format expected by agent loop
+        conversation_history = [
+            {"role": turn["role"], "content": turn["content"]}
+            for turn in history_turns
+        ]
+        
+        if output_mode == "structured" and pydantic_model:
+            # Structured output mode - accumulate all chunks, then yield final JSON
+            logger.info("Using structured output mode")
+            try:
+                complete_response = ""
+                # Accumulate all chunks without yielding them (structured output should be atomic)
+                async for chunk in agent_loop.stream(
+                    user_message=composed_prompt,
+                    conversation_history=conversation_history,
+                    structured_output_model=pydantic_model
+                ):
+                    complete_response += chunk
+                    # Don't append to assistant_chunks here - we'll add the final JSON instead
+                
+                # For structured output, try to extract JSON
+                json_response = complete_response.strip()
+                
+                # Remove markdown code blocks if present
+                json_patterns = [
+                    r'```json\s*(\{.*?\})\s*```',
+                    r'```\s*(\{.*?\})\s*```',
+                ]
+                
+                for pattern in json_patterns:
+                    matches = re.findall(pattern, complete_response, re.DOTALL)
+                    if matches:
+                        json_response = matches[-1]
+                        logger.info("Extracted JSON from markdown code block")
+                        break
+                
+                # Try to find standalone JSON object
+                if json_response == complete_response:
+                    json_match = re.search(r'(\{.*\})', complete_response, re.DOTALL)
+                    if json_match:
+                        json_response = json_match.group(1)
+                        logger.info("Extracted JSON object from response")
+                
+                # Validate and transform JSON to match schema
                 try:
-                    complete_response = ""
-                    # Accumulate all chunks without yielding them (structured output should be atomic)
-                    async for chunk in agent_loop.stream(
-                        user_message=composed_prompt,
-                        conversation_history=conversation_history,
-                        structured_output_model=pydantic_model
-                    ):
-                        complete_response += chunk
-                        # Don't append to assistant_chunks here - we'll add the final JSON instead
+                    parsed_json = json_module.loads(json_response)
+                    logger.info("Parsed JSON from structured output")
+                except json_module.JSONDecodeError:
+                    # If JSON parsing fails, treat the response as plain text and wrap it
+                    logger.warning(f"Failed to parse JSON from structured output, treating as plain text")
+                    parsed_json = None
+                
+                # Transform to match schema (especially for chat_response)
+                if output_schema_name == "chat_response":
+                    # Get schema to check required fields
+                    schema_dict = get_schema(output_schema_name)
+                    required_fields = schema_dict.get("required", [])
                     
-                    # For structured output, try to extract JSON
-                    json_response = complete_response.strip()
+                    # Build the structured response
+                    structured_response = {}
                     
-                    # Remove markdown code blocks if present
-                    json_patterns = [
-                        r'```json\s*(\{.*?\})\s*```',
-                        r'```\s*(\{.*?\})\s*```',
-                    ]
+                    # If we have parsed JSON, use it as a starting point
+                    if parsed_json:
+                        structured_response = parsed_json
                     
-                    for pattern in json_patterns:
-                        matches = re.findall(pattern, complete_response, re.DOTALL)
-                        if matches:
-                            json_response = matches[-1]
-                            logger.info("Extracted JSON from markdown code block")
-                            break
+                    # Ensure required fields are present
+                    if "response" not in structured_response or not structured_response["response"]:
+                        # Use complete_response as the response text if not in parsed JSON
+                        if parsed_json and isinstance(parsed_json.get("response"), str):
+                            structured_response["response"] = parsed_json["response"]
+                        else:
+                            # Use the complete response (plain text) as the response field
+                            structured_response["response"] = complete_response.strip()
                     
-                    # Try to find standalone JSON object
-                    if json_response == complete_response:
-                        json_match = re.search(r'(\{.*\})', complete_response, re.DOTALL)
-                        if json_match:
-                            json_response = json_match.group(1)
-                            logger.info("Extracted JSON object from response")
+                    # Always ensure timestamp is set (use current time)
+                    if "timestamp" not in structured_response:
+                        structured_response["timestamp"] = current_datetime_iso
                     
-                    # Validate and transform JSON to match schema
+                    # Always ensure sessionId is set
+                    if "sessionId" not in structured_response:
+                        structured_response["sessionId"] = session_id
+                    
+                    # Validate using Pydantic model
                     try:
-                        parsed_json = json_module.loads(json_response)
-                        logger.info("Parsed JSON from structured output")
-                    except json_module.JSONDecodeError:
-                        # If JSON parsing fails, treat the response as plain text and wrap it
-                        logger.warning(f"Failed to parse JSON from structured output, treating as plain text")
-                        parsed_json = None
-                    
-                    # Transform to match schema (especially for chat_response)
-                    if output_schema_name == "chat_response":
-                        # Get schema to check required fields
-                        schema_dict = get_schema(output_schema_name)
-                        required_fields = schema_dict.get("required", [])
-                        
-                        # Build the structured response
-                        structured_response = {}
-                        
-                        # If we have parsed JSON, use it as a starting point
-                        if parsed_json:
-                            structured_response = parsed_json
-                        
-                        # Ensure required fields are present
-                        if "response" not in structured_response or not structured_response["response"]:
-                            # Use complete_response as the response text if not in parsed JSON
-                            if parsed_json and isinstance(parsed_json.get("response"), str):
-                                structured_response["response"] = parsed_json["response"]
-                            else:
-                                # Use the complete response (plain text) as the response field
-                                structured_response["response"] = complete_response.strip()
-                        
-                        # Always ensure timestamp is set (use current time)
-                        if "timestamp" not in structured_response:
-                            structured_response["timestamp"] = current_datetime_iso
-                        
-                        # Always ensure sessionId is set
-                        if "sessionId" not in structured_response:
-                            structured_response["sessionId"] = session_id
-                        
-                        # Validate using Pydantic model
+                        validated_response = pydantic_model(**structured_response)
+                        # Convert back to dict and then JSON string
+                        final_json = validated_response.model_dump_json()
+                        logger.info("Validated and transformed structured output to match schema")
+                        # Add the final JSON to assistant_chunks for transcript persistence
+                        assistant_chunks.append(final_json)
+                        # Yield the validated JSON as a single chunk
+                        yield final_json
+                    except Exception as validation_error:
+                        logger.error(f"Failed to validate structured output against schema: {validation_error}")
+                        # Fallback: create a minimal valid response
+                        fallback_response = {
+                            "response": structured_response.get("response", complete_response.strip()),
+                            "timestamp": current_datetime_iso,
+                            "sessionId": session_id
+                        }
+                        fallback_json = json_module.dumps(fallback_response)
+                        assistant_chunks.append(fallback_json)
+                        yield fallback_json
+                else:
+                    # For other schemas, just validate the parsed JSON
+                    if parsed_json:
                         try:
-                            validated_response = pydantic_model(**structured_response)
-                            # Convert back to dict and then JSON string
+                            validated_response = pydantic_model(**parsed_json)
                             final_json = validated_response.model_dump_json()
-                            logger.info("Validated and transformed structured output to match schema")
-                            # Add the final JSON to assistant_chunks for transcript persistence
+                            logger.info("Validated JSON structure from structured output")
                             assistant_chunks.append(final_json)
-                            # Yield the validated JSON as a single chunk
                             yield final_json
                         except Exception as validation_error:
                             logger.error(f"Failed to validate structured output against schema: {validation_error}")
-                            # Fallback: create a minimal valid response
-                            fallback_response = {
-                                "response": structured_response.get("response", complete_response.strip()),
-                                "timestamp": current_datetime_iso,
-                                "sessionId": session_id
-                            }
-                            fallback_json = json_module.dumps(fallback_response)
+                            # Fallback: use parsed JSON as-is
+                            fallback_json = json_module.dumps(parsed_json)
                             assistant_chunks.append(fallback_json)
                             yield fallback_json
                     else:
-                        # For other schemas, just validate the parsed JSON
-                        if parsed_json:
-                            try:
-                                validated_response = pydantic_model(**parsed_json)
-                                final_json = validated_response.model_dump_json()
-                                logger.info("Validated JSON structure from structured output")
-                                assistant_chunks.append(final_json)
-                                yield final_json
-                            except Exception as validation_error:
-                                logger.error(f"Failed to validate structured output against schema: {validation_error}")
-                                # Fallback: use parsed JSON as-is
-                                fallback_json = json_module.dumps(parsed_json)
-                                assistant_chunks.append(fallback_json)
-                                yield fallback_json
-                        else:
-                            # No valid JSON found
-                            logger.error("No valid JSON found in structured output response")
-                            raise ValueError("Structured output mode requires valid JSON response")
-                    
-                    # Add metadata after JSON response
-                    token_counts = agent_loop.get_token_counts()
-                    metadata = json_module.dumps({"__metadata__": token_counts})
-                    yield metadata
-                except Exception as e:
-                    logger.error(f"Error in structured output mode: {e}", exc_info=True)
-                    raise RuntimeError(f"Failed to get structured output: {e}") from e
-            else:
-                # Regular streaming mode
-                logger.info("Streaming response from AgentCore")
-                async for chunk in agent_loop.stream(
-                    user_message=composed_prompt,
-                    conversation_history=conversation_history
-                ):
-                    assistant_chunks.append(chunk)
-                    yield chunk
+                        # No valid JSON found
+                        logger.error("No valid JSON found in structured output response")
+                        raise ValueError("Structured output mode requires valid JSON response")
                 
-                # Add metadata after streaming completes
+                # Add metadata after JSON response
                 token_counts = agent_loop.get_token_counts()
                 metadata = json_module.dumps({"__metadata__": token_counts})
                 yield metadata
+            except Exception as e:
+                logger.error(f"Error in structured output mode: {e}", exc_info=True)
+                raise RuntimeError(f"Failed to get structured output: {e}") from e
+        else:
+            # Regular streaming mode
+            logger.info("Streaming response from AgentCore")
+            async for chunk in agent_loop.stream(
+                user_message=composed_prompt,
+                conversation_history=conversation_history
+            ):
+                assistant_chunks.append(chunk)
+                yield chunk
+            
+            # Add metadata after streaming completes
+            token_counts = agent_loop.get_token_counts()
+            metadata = json_module.dumps({"__metadata__": token_counts})
+            yield metadata
     
     except Exception as e:
-        logger.error(f"Error while streaming response from AgentCore (including MCP/tools): {e}")
+        logger.error(f"Error while streaming response from AgentCore: {e}")
 
     # After streaming completes, update transcript with this turn.
     assistant_text = "".join(assistant_chunks).strip()

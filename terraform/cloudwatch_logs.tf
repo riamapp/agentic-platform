@@ -66,16 +66,6 @@ resource "aws_cloudwatch_log_group" "websocket_disconnect_lambda" {
   }
 }
 
-# MCP Lambda
-resource "aws_cloudwatch_log_group" "mcp_lambda" {
-  name              = "/aws/lambda/${aws_lambda_function.mcp_lambda.function_name}"
-  retention_in_days = 30
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
 # Bedrock AgentCore Runtime Log Groups
 # Note: Bedrock AgentCore automatically creates log groups with the pattern:
 # /aws/bedrock-agentcore/runtimes/{runtime-name}-{runtime-id}-{endpoint-name}
