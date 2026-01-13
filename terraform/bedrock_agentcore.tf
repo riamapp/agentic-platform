@@ -351,6 +351,15 @@ resource "aws_iam_role_policy" "agentcore_runtime_execution_role_policy" {
         ]
       },
       {
+        Sid    = "AWSMarketplaceAccess"
+        Effect = "Allow"
+        Action = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "CodeInterpreterSession"
         Effect = "Allow"
         Action = [
