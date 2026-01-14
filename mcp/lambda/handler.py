@@ -3,6 +3,11 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+# Import tools from their modules
+from students_overture import students_overture_tool
+from students_skills_quadrant import students_skills_quadrant_tool
+from accordo_audio_feedback import accordo_audio_feedback_tool
+
 # Configure root logger for Lambda - Lambda automatically captures stdout/stderr
 # Set root logger level to INFO to ensure all module loggers output
 root_logger = logging.getLogger()
@@ -67,6 +72,55 @@ def lambda_handler(event, context):
             logger.error(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'N/A'}")
             logger.error(f"Event content: {json.dumps(event, default=str)[:500]}")
             return _response(400, {"error": error_msg})
+
+        # Route to appropriate tool handler
+        if tool_name == "students_overture":
+            try:
+                result = students_overture_tool(event)
+                return _response(200, {"result": result})
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                logger.error(f"Error in students_overture tool: {type(e).__name__}: {str(e)}")
+                error_result = {
+                    "error": f"Error in students_overture tool: {type(e).__name__}: {str(e)}",
+                    "errorType": type(e).__name__,
+                    "details": str(e),
+                    "message": f"The students-overture tool encountered an error: {str(e)}. Please check the error details above."
+                }
+                return _response(200, {"result": error_result})
+
+        if tool_name == "students_skills_quadrant":
+            try:
+                result = students_skills_quadrant_tool(event)
+                return _response(200, {"result": result})
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                logger.error(f"Error in students_skills_quadrant tool: {type(e).__name__}: {str(e)}")
+                error_result = {
+                    "error": f"Error in students_skills_quadrant tool: {type(e).__name__}: {str(e)}",
+                    "errorType": type(e).__name__,
+                    "details": str(e),
+                    "message": f"The students-skills-quadrant tool encountered an error: {str(e)}. Please check the error details above."
+                }
+                return _response(200, {"result": error_result})
+
+        if tool_name == "accordo_audio_feedback":
+            try:
+                result = accordo_audio_feedback_tool(event)
+                return _response(200, {"result": result})
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                logger.error(f"Error in accordo_audio_feedback tool: {type(e).__name__}: {str(e)}")
+                error_result = {
+                    "error": f"Error in accordo_audio_feedback tool: {type(e).__name__}: {str(e)}",
+                    "errorType": type(e).__name__,
+                    "details": str(e),
+                    "message": f"The accordo-audio-feedback tool encountered an error: {str(e)}. Please check the error details above."
+                }
+                return _response(200, {"result": error_result})
 
         return _response(400, {"error": f"Unknown tool '{tool_name}'"})
 

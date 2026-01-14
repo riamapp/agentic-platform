@@ -217,4 +217,36 @@ class ToolRegistry:
             }
         }
     
+    def create_mcp_tool_schema(self, mcp_tool: Any) -> Dict[str, Any]:
+        """
+        Create schema for an MCP tool from the Gateway.
+        
+        Args:
+            mcp_tool: MCP tool object from Gateway
+            
+        Returns:
+            Tool schema in Bedrock format
+        """
+        # Try to extract description
+        description = getattr(mcp_tool, 'description', 'MCP tool from Gateway')
+        
+        # Try to extract input schema
+        input_schema = {}
+        if hasattr(mcp_tool, 'inputSchema'):
+            input_schema = mcp_tool.inputSchema if isinstance(mcp_tool.inputSchema, dict) else {}
+        elif hasattr(mcp_tool, 'input_schema'):
+            input_schema = mcp_tool.input_schema if isinstance(mcp_tool.input_schema, dict) else {}
+        
+        # If no schema found, create a basic one
+        if not input_schema:
+            input_schema = {
+                "type": "object",
+                "properties": {},
+                "description": "Tool arguments"
+            }
+        
+        return {
+            "description": description,
+            "inputSchema": input_schema
+        }
 

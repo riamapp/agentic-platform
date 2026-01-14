@@ -33,3 +33,51 @@ cognito_client_secret = "replace-with-m2m-client-secret"
 # For a simple setup, "openid" is sufficient.
 cognito_scope = "openid"
 
+################################################################################
+# Student Data Resources Configuration
+################################################################################
+
+# VPC Configuration
+# Set create_vpc = true to create a new VPC, or false to use an existing one
+create_vpc = true
+
+# If create_vpc = true, these settings will be used to create the VPC:
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]  # Public subnets for NAT Gateway
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"] # Private subnets for RDS and Lambda
+
+# If create_vpc = false, uncomment and provide these instead:
+# vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
+# rds_subnet_ids = ["subnet-xxxxxxxxxxxxxxxxx", "subnet-yyyyyyyyyyyyyyyyy"]
+
+# RDS PostgreSQL Database Configuration
+# Database name (must begin with a letter and contain only alphanumeric characters, default: riamstudentsoverture)
+rds_database_name = "riamstudentsoverture"
+
+# RDS Master Credentials
+# WARNING: Store this securely! Consider using AWS Secrets Manager or environment variables
+rds_master_username = "postgres"
+rds_master_password = "replace-with-secure-password"
+
+# RDS Instance Configuration
+rds_engine_version         = "15.15"     # PostgreSQL version (use full RDS version like 15.15, 16.11, etc.)
+rds_instance_class         = "db.t3.micro"  # Instance size (db.t3.micro for dev, db.t3.small+ for prod)
+rds_allocated_storage      = 20           # Initial storage in GB
+rds_max_allocated_storage = 100          # Max storage for autoscaling
+
+# RDS High Availability and Security
+rds_publicly_accessible = false          # Set to true only if needed for external access
+rds_multi_az            = false         # Set to true for production (adds cost)
+rds_backup_retention_period = 7         # Days to retain backups
+rds_backup_window          = "03:00-04:00"  # UTC backup window
+rds_maintenance_window      = "mon:04:00-mon:05:00"  # UTC maintenance window
+
+# RDS Lifecycle
+rds_skip_final_snapshot = true           # Set to false for production to keep final snapshot
+
+# RDS Monitoring
+rds_performance_insights_enabled = false  # Enable for production monitoring (adds cost)
+
+# DynamoDB Configuration
+# Table name for students-skills-quadrant (default: students-skills-quadrant)
+dynamodb_skills_quadrant_table = "students-skills-quadrant"

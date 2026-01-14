@@ -13,6 +13,7 @@ from boto3.dynamodb.conditions import Key
 
 from bedrock_agentcore import BedrockAgentCoreApp
 from bedrock_agentcore.memory import MemoryClient
+from .mcp_client.client import get_streamable_http_mcp_client
 from .model.load import load_model
 from .model.schemas import get_schema, get_pydantic_model, list_available_schemas
 from .tools.code_interpreter import CodeInterpreterTool
@@ -63,6 +64,11 @@ if MEMORY_ID and REGION:
 _DDB_TABLE = None
 if CONVERSATION_TABLE and REGION:
     _DDB_TABLE = boto3.resource("dynamodb", region_name=REGION).Table(CONVERSATION_TABLE)
+
+# MCP Client context function
+# In runtime, create a new Streamable HTTP MCP client per turn.
+def get_mcp_client_context():
+    return get_streamable_http_mcp_client()
 
 # Integrate with Bedrock AgentCore
 app = BedrockAgentCoreApp()
@@ -227,29 +233,137 @@ async def invoke(payload, context):
 
     assistant_chunks: List[str] = []
 
+    # Open MCP client context for the full duration of the tool execution so
+    # MCP tools have a live client session when invoked.
     try:
-        # Create tool registry
-        tool_registry = ToolRegistry()
-        
-        # Register code interpreter tool
-        if code_interpreter_tool:
-            tool_registry.register_tool(
-                "code_interpreter",
-                code_interpreter_tool.code_interpreter,
-                tool_registry.create_code_interpreter_schema()
-            )
-            logger.info("Registered code_interpreter tool")
-        
-        # Register browser tool (browser tool has fixes built-in)
-        if browser_tool:
-            tool_registry.register_tool(
-                "browser",
-                browser_tool.browser,
-                tool_registry.create_browser_schema()
-            )
-            logger.info("Registered browser tool")
-        
-        logger.info(f"Total tools registered: {len(tool_registry._tools)}")
+        async with get_mcp_client_context() as client:
+            logger.info("Attempting to list MCP tools...")
+            mcp_tools = await client.list_tools()
+            logger.info(f"MCP tools list returned: {len(mcp_tools) if mcp_tools else 0} tools")
+            if mcp_tools:
+                tool_names = [getattr(tool, 'name', str(tool)) for tool in mcp_tools]
+                logger.info(f"MCP tool names: {tool_names}")
+            else:
+                logger.warning("No MCP tools found - MCP client may not be configured correctly or gateway may not be accessible")
+
+            # Create tool registry
+            tool_registry = ToolRegistry()
+            
+            # Register code interpreter tool
+            if code_interpreter_tool:
+                tool_registry.register_tool(
+                    "code_interpreter",
+                    code_interpreter_tool.code_interpreter,
+                    tool_registry.create_code_interpreter_schema()
+                )
+                logger.info("Registered code_interpreter tool")
+            
+            # Register browser tool (browser tool has fixes built-in)
+            if browser_tool:
+                tool_registry.register_tool(
+                    "browser",
+                    browser_tool.browser,
+                    tool_registry.create_browser_schema()
+                )
+                logger.info("Registered browser tool")
+            
+            # Register MCP tools
+            # MCP tools from the gateway need to be called through the MCP client
+            # Store reference to client for tool execution
+            mcp_client_ref = client
+            
+            for mcp_tool in mcp_tools:
+                tool_name = None
+                tool_schema = None
+                
+                # Extract tool name and schema from MCP tool
+                if hasattr(mcp_tool, 'name'):
+                    tool_name = mcp_tool.name
+                elif hasattr(mcp_tool, '__name__'):
+                    tool_name = mcp_tool.__name__
+                else:
+                    tool_name = str(type(mcp_tool).__name__)
+                
+                # Extract schema
+                if hasattr(mcp_tool, 'inputSchema'):
+                    tool_schema = {
+                        "description": getattr(mcp_tool, 'description', 'MCP tool'),
+                        "inputSchema": mcp_tool.inputSchema if isinstance(mcp_tool.inputSchema, dict) else {}
+                    }
+                else:
+                    tool_schema = tool_registry.create_mcp_tool_schema(mcp_tool)
+                
+                # Create a wrapper function for MCP tools that calls through MCP client
+                # Note: We're in an async context (invoke is async), so we can use await
+                def make_mcp_tool_func(tool, name, mcp_client, injected_user_id, injected_frontend_identifier):
+                    async def mcp_tool_func_async(arguments: Dict[str, Any]) -> Dict[str, Any]:
+                        try:
+                            # Log the arguments being passed to the tool (before injection)
+                            if isinstance(arguments, dict):
+                                logger.info(f"MCP tool '{name}' called with arguments: {json_module.dumps(arguments, default=str)}")
+                            
+                            # Inject userId and frontendIdentifier into arguments if not already present
+                            # This ensures MCP tools always have access to these values
+                            if isinstance(arguments, dict):
+                                if injected_user_id and "userId" not in arguments:
+                                    arguments["userId"] = injected_user_id
+                                if injected_frontend_identifier and "frontendIdentifier" not in arguments:
+                                    arguments["frontendIdentifier"] = injected_frontend_identifier
+                                
+                                # Log after injection
+                                logger.info(f"MCP tool '{name}' arguments after injection: {json_module.dumps(arguments, default=str)}")
+                            
+                            # Try to call tool through MCP client (async)
+                            if hasattr(mcp_client, 'call_tool'):
+                                result = await mcp_client.call_tool(name, arguments)
+                            elif hasattr(mcp_client._client, 'call_tool'):
+                                # Check if it's async
+                                import inspect
+                                if inspect.iscoroutinefunction(mcp_client._client.call_tool):
+                                    result = await mcp_client._client.call_tool(name, arguments)
+                                else:
+                                    result = mcp_client._client.call_tool(name, arguments)
+                            elif hasattr(tool, 'call'):
+                                import inspect
+                                if inspect.iscoroutinefunction(tool.call):
+                                    result = await tool.call(arguments)
+                                else:
+                                    result = tool.call(arguments)
+                            elif callable(tool):
+                                import inspect
+                                if inspect.iscoroutinefunction(tool):
+                                    result = await tool(arguments)
+                                else:
+                                    result = tool(arguments)
+                            else:
+                                return {"status": "error", "content": [{"text": f"MCP tool {name} is not callable"}]}
+                            
+                            # Convert result to standard format
+                            if isinstance(result, dict):
+                                return result
+                            else:
+                                return {"status": "success", "content": [{"text": str(result)}]}
+                        except Exception as e:
+                            logger.error(f"Error executing MCP tool {name}: {e}", exc_info=True)
+                            return {"status": "error", "content": [{"text": f"Error executing MCP tool: {str(e)}"}]}
+                    
+                    # Return async function - tool registry will need to handle it
+                    return mcp_tool_func_async
+                
+                tool_registry.register_tool(
+                    tool_name,
+                    make_mcp_tool_func(mcp_tool, tool_name, mcp_client_ref, user_id, frontend_identifier),
+                    tool_schema
+                )
+                logger.info(f"Registered MCP tool: {tool_name}")
+            
+            logger.info(f"Total tools registered: {len(tool_registry._tools)}")
+            
+            # Get current date/time for context
+            current_datetime = datetime.now(timezone.utc)
+            current_date_str = current_datetime.strftime("%Y-%m-%d")
+            current_time_str = current_datetime.strftime("%H:%M:%S UTC")
+            current_datetime_iso = current_datetime.isoformat().replace('+00:00', 'Z')
         
         # Get current date/time for context
         current_datetime = datetime.now(timezone.utc)

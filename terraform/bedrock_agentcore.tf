@@ -328,20 +328,21 @@ resource "aws_bedrockagentcore_agent_runtime" "agentcore_runtime" {
     network_mode = "PUBLIC"
   }
   environment_variables = {
-    AWS_REGION                = data.aws_region.current.region
-    MEMORY_ID                 = aws_bedrockagentcore_memory.agentcore_memory.id
-    CONVERSATION_TABLE        = aws_dynamodb_table.conversation_table.name
-    COGNITO_CLIENT_ID         = var.cognito_m2m_client_id
-    COGNITO_CLIENT_SECRET     = var.cognito_client_secret
-    COGNITO_TOKEN_URL         = "https://${replace(var.cognito_domain_url, "https://", "")}/oauth2/token"
-    COGNITO_SCOPE             = var.cognito_scope
-    LOG_LEVEL                 = "DEBUG"
-    MAX_PROMPT_TOKENS         = tostring(var.max_prompt_tokens)
-    BROWSER_MAX_HTML_SIZE      = tostring(var.browser_max_html_size)
-    BROWSER_MAX_TEXT_SIZE      = tostring(var.browser_max_text_size)
-    BROWSER_MAX_HTML_TOKENS    = tostring(var.browser_max_html_tokens)
-    BROWSER_MAX_TEXT_TOKENS    = tostring(var.browser_max_text_tokens)
-    TOKEN_WARNING_THRESHOLD    = tostring(var.token_warning_threshold)
+    AWS_REGION              = data.aws_region.current.region
+    MEMORY_ID               = aws_bedrockagentcore_memory.agentcore_memory.id
+    CONVERSATION_TABLE      = aws_dynamodb_table.conversation_table.name
+    GATEWAY_URL             = aws_bedrockagentcore_gateway.agentcore_gateway.gateway_url
+    COGNITO_CLIENT_ID       = var.cognito_m2m_client_id
+    COGNITO_CLIENT_SECRET   = var.cognito_client_secret
+    COGNITO_TOKEN_URL       = "https://${replace(var.cognito_domain_url, "https://", "")}/oauth2/token"
+    COGNITO_SCOPE           = var.cognito_scope
+    LOG_LEVEL               = "DEBUG"
+    MAX_PROMPT_TOKENS       = tostring(var.max_prompt_tokens)
+    BROWSER_MAX_HTML_SIZE    = tostring(var.browser_max_html_size)
+    BROWSER_MAX_TEXT_SIZE   = tostring(var.browser_max_text_size)
+    BROWSER_MAX_HTML_TOKENS = tostring(var.browser_max_html_tokens)
+    BROWSER_MAX_TEXT_TOKENS = tostring(var.browser_max_text_tokens)
+    TOKEN_WARNING_THRESHOLD = tostring(var.token_warning_threshold)
   }
 
   # Force runtime to update when container image changes
