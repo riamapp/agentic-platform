@@ -9,6 +9,7 @@ JOB_GET_BUILD_DIR = api/jobs/get_package
 JOB_CANCEL_BUILD_DIR = api/jobs/cancel_package
 WEBSOCKET_CONNECT_BUILD_DIR = api/websocket/connect_package
 WEBSOCKET_DISCONNECT_BUILD_DIR = api/websocket/disconnect_package
+FEEDBACK_BUILD_DIR = api/feedback/feedback_package
 
 # Zip file targets
 MCP_LAMBDA_ZIP = $(BUILD_DIR)/mcp_lambda.zip
@@ -18,8 +19,9 @@ JOB_GET_LAMBDA_ZIP = $(BUILD_DIR)/job_get_lambda.zip
 JOB_CANCEL_LAMBDA_ZIP = $(BUILD_DIR)/job_cancel_lambda.zip
 WEBSOCKET_CONNECT_LAMBDA_ZIP = $(BUILD_DIR)/websocket_connect_lambda.zip
 WEBSOCKET_DISCONNECT_LAMBDA_ZIP = $(BUILD_DIR)/websocket_disconnect_lambda.zip
+FEEDBACK_LAMBDA_ZIP = $(BUILD_DIR)/feedback_lambda.zip
 
-.PHONY: clean help all-lambda-zip mcp-lambda-zip job-submit-lambda-zip job-worker-lambda-zip job-get-lambda-zip job-cancel-lambda-zip websocket-connect-lambda-zip websocket-disconnect-lambda-zip
+.PHONY: clean help all-lambda-zip mcp-lambda-zip job-submit-lambda-zip job-worker-lambda-zip job-get-lambda-zip job-cancel-lambda-zip websocket-connect-lambda-zip websocket-disconnect-lambda-zip feedback-lambda-zip
 
 help:
 	@echo "Available targets:"
@@ -30,12 +32,13 @@ help:
 	@echo "  job-cancel-lambda-zip       - Build Job Cancel Lambda package"
 	@echo "  websocket-connect-lambda-zip    - Build WebSocket Connect Lambda package"
 	@echo "  websocket-disconnect-lambda-zip - Build WebSocket Disconnect Lambda package"
+	@echo "  feedback-lambda-zip         - Build Feedback Lambda package"
 	@echo "  lambda-zip                  - Build all Lambda packages (legacy)"
 	@echo "  all-lambda-zip              - Build all Lambda packages in parallel"
 	@echo "  clean                       - Remove all build artifacts"
 
 # Build all Lambda packages in parallel
-all-lambda-zip: $(MCP_LAMBDA_ZIP) $(JOB_SUBMIT_LAMBDA_ZIP) $(JOB_WORKER_LAMBDA_ZIP) $(JOB_GET_LAMBDA_ZIP) $(JOB_CANCEL_LAMBDA_ZIP) $(WEBSOCKET_CONNECT_LAMBDA_ZIP) $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP)
+all-lambda-zip: $(MCP_LAMBDA_ZIP) $(JOB_SUBMIT_LAMBDA_ZIP) $(JOB_WORKER_LAMBDA_ZIP) $(JOB_GET_LAMBDA_ZIP) $(JOB_CANCEL_LAMBDA_ZIP) $(WEBSOCKET_CONNECT_LAMBDA_ZIP) $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP) $(FEEDBACK_LAMBDA_ZIP)
 
 # Phony aliases for backward compatibility (null_resource provisioners use these)
 mcp-lambda-zip: $(MCP_LAMBDA_ZIP)
@@ -45,6 +48,7 @@ job-get-lambda-zip: $(JOB_GET_LAMBDA_ZIP)
 job-cancel-lambda-zip: $(JOB_CANCEL_LAMBDA_ZIP)
 websocket-connect-lambda-zip: $(WEBSOCKET_CONNECT_LAMBDA_ZIP)
 websocket-disconnect-lambda-zip: $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP)
+feedback-lambda-zip: $(FEEDBACK_LAMBDA_ZIP)
 
 # Build MCP Lambda package
 $(MCP_LAMBDA_ZIP): mcp/lambda/handler.py mcp/lambda/requirements.txt mcp/lambda/students_overture.py mcp/lambda/students_skills_quadrant.py mcp/lambda/accordo_audio_feedback.py
@@ -171,6 +175,23 @@ $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP): api/websocket/disconnect_handler.py api/webs
 		    find $(WEBSOCKET_DISCONNECT_BUILD_DIR) -type f -name '*.pyc' -delete 2>/dev/null || true; \
 		    cd $(WEBSOCKET_DISCONNECT_BUILD_DIR) && zip -q -r /var/task/$(WEBSOCKET_DISCONNECT_LAMBDA_ZIP) ."
 
+# Build Feedback Lambda package
+$(FEEDBACK_LAMBDA_ZIP): api/feedback/feedback_handler.py api/feedback/requirements.txt
+	@echo "Building Feedback Lambda package..."
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(FEEDBACK_BUILD_DIR) $(FEEDBACK_LAMBDA_ZIP)
+	docker run --rm --platform linux/amd64 --entrypoint /bin/bash \
+		-v "$(PWD):/var/task" \
+		public.ecr.aws/lambda/python:3.12 \
+		-c "yum install -y zip >/dev/null 2>&1 || microdnf install -y zip >/dev/null 2>&1 || true; \
+		    mkdir -p $(BUILD_DIR) $(FEEDBACK_BUILD_DIR); \
+		    cp api/feedback/feedback_handler.py $(FEEDBACK_BUILD_DIR)/; \
+		    pip install -r api/feedback/requirements.txt -t $(FEEDBACK_BUILD_DIR) --upgrade --quiet; \
+		    find $(FEEDBACK_BUILD_DIR) -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; \
+		    find $(FEEDBACK_BUILD_DIR) -type d -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true; \
+		    find $(FEEDBACK_BUILD_DIR) -type f -name '*.pyc' -delete 2>/dev/null || true; \
+		    cd $(FEEDBACK_BUILD_DIR) && zip -q -r /var/task/$(FEEDBACK_LAMBDA_ZIP) ."
+
 clean-job-submit:
 	rm -rf $(JOB_SUBMIT_BUILD_DIR) $(JOB_SUBMIT_LAMBDA_ZIP)
 
@@ -189,9 +210,12 @@ clean-websocket-connect:
 clean-websocket-disconnect:
 	rm -rf $(WEBSOCKET_DISCONNECT_BUILD_DIR) $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP)
 
+clean-feedback:
+	rm -rf $(FEEDBACK_BUILD_DIR) $(FEEDBACK_LAMBDA_ZIP)
+
 clean-mcp:
 	rm -rf $(MCP_BUILD_DIR) $(MCP_LAMBDA_ZIP)
 
-clean: clean-mcp clean-job-submit clean-job-worker clean-job-get clean-job-cancel clean-websocket-connect clean-websocket-disconnect
+clean: clean-mcp clean-job-submit clean-job-worker clean-job-get clean-job-cancel clean-websocket-connect clean-websocket-disconnect clean-feedback
 	@# Clean up build directory if it's empty
 	@if [ -d "$(BUILD_DIR)" ] && [ -z "$$(ls -A $(BUILD_DIR) 2>/dev/null)" ]; then rmdir $(BUILD_DIR) 2>/dev/null || true; fi

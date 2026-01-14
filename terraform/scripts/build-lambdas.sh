@@ -22,6 +22,7 @@ make job-get-lambda-zip >&2
 make job-cancel-lambda-zip >&2
 make websocket-connect-lambda-zip >&2
 make websocket-disconnect-lambda-zip >&2
+make feedback-lambda-zip >&2
 
 # Calculate a hash of all zip files to ensure they're built
 if [ -f "build/api_lambda.zip" ] && \
@@ -31,7 +32,8 @@ if [ -f "build/api_lambda.zip" ] && \
    [ -f "build/job_get_lambda.zip" ] && \
    [ -f "build/job_cancel_lambda.zip" ] && \
    [ -f "build/websocket_connect_lambda.zip" ] && \
-   [ -f "build/websocket_disconnect_lambda.zip" ]; then
+   [ -f "build/websocket_disconnect_lambda.zip" ] && \
+   [ -f "build/feedback_lambda.zip" ]; then
   # Output JSON with hash (using combined hash of all files)
   HASH=$(cat build/*.zip | sha256sum | cut -d' ' -f1)
   echo "{\"hash\": \"$HASH\", \"status\": \"success\"}"

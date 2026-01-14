@@ -81,3 +81,7 @@ rds_performance_insights_enabled = false  # Enable for production monitoring (ad
 # DynamoDB Configuration
 # Table name for students-skills-quadrant (default: students-skills-quadrant)
 dynamodb_skills_quadrant_table = "students-skills-quadrant"
+
+# User Preferences Table (from agentic-user-api workspace)
+# This table stores user preferences including student_id mapping
+user_preferences_table_name = "agentic-user-preferences-dev"

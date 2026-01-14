@@ -99,6 +99,12 @@ variable "dynamodb_skills_quadrant_table" {
   default     = "students-skills-quadrant"
 }
 
+# User Preferences Table (from agentic-user-api workspace)
+variable "user_preferences_table_name" {
+  description = "Name of the DynamoDB table for user preferences (from agentic-user-api)"
+  type        = string
+}
+
 # VPC Configuration Variables
 # If create_vpc is true, a new VPC will be created. If false, existing VPC resources must be provided.
 variable "create_vpc" {
