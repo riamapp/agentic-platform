@@ -1,6 +1,6 @@
 ################################################################################
 # Music Analysis Lambda
-# Triggered by S3 uploads to student-*/recordings/
+# Triggered by S3 uploads to student-*/uploads/
 # Outputs feedback JSON to student-*/feedback/
 ################################################################################
 
@@ -107,12 +107,12 @@ resource "aws_iam_role_policy" "music_analysis_lambda_permissions" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "S3ReadRecordings"
+        Sid    = "S3ReadUploads"
         Effect = "Allow"
         Action = [
           "s3:GetObject"
         ]
-        Resource = "${aws_s3_bucket.student_feedback.arn}/student-*/recordings/*"
+        Resource = "${aws_s3_bucket.student_feedback.arn}/student-*/uploads/*"
       },
       {
         Sid    = "S3WriteFeedback"

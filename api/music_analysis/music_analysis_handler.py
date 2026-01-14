@@ -1,6 +1,6 @@
 """
 Music Analysis Lambda with AWS Transcribe + Bedrock Nova Pro
-Triggered by S3 uploads to student-{id}/recordings/
+Triggered by S3 uploads to student-{id}/uploads/
 Outputs feedback JSON to student-{id}/feedback/
 """
 
@@ -33,7 +33,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Main Lambda handler for music analysis.
 
-    Triggered by S3 uploads to student-{id}/recordings/
+    Triggered by S3 uploads to student-{id}/uploads/
     1. Transcribe audio with AWS Transcribe
     2. Analyze transcript with Bedrock Nova Pro
     3. Store feedback JSON in S3 at student-{id}/feedback/
@@ -51,15 +51,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             bucket = record['s3']['bucket']['name']
             key = urllib.parse.unquote_plus(record['s3']['object']['key'])
 
-            # Check if this is a recording upload (ignore other uploads)
-            if '/recordings/' not in key:
-                logger.info(f"[MusicAnalysis] Ignoring non-recording upload: {key}")
+            # Check if this is an upload (ignore other uploads)
+            if '/uploads/' not in key:
+                logger.info(f"[MusicAnalysis] Ignoring non-upload: {key}")
                 return {
                     'statusCode': 200,
-                    'body': json.dumps({'message': 'Ignored - not a recording upload'})
+                    'body': json.dumps({'message': 'Ignored - not an upload'})
                 }
 
-            # Extract student ID from key: student-{id}/recordings/{filename}
+            # Extract student ID from key: student-{id}/uploads/{filename}
             parts = key.split('/')
             student_id = parts[0].replace('student-', '') if parts[0].startswith('student-') else 'unknown'
             recording_id = f"rec-{int(datetime.now().timestamp())}"
