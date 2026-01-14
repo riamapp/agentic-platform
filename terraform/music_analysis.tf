@@ -147,8 +147,8 @@ resource "aws_iam_role_policy" "music_analysis_lambda_permissions" {
           "bedrock:InvokeModel"
         ]
         Resource = [
-          "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/us.amazon.nova-pro-v1:0",
-          "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/*"
+          "arn:aws:bedrock:${data.aws_region.current.id}::foundation-model/us.amazon.nova-pro-v1:0",
+          "arn:aws:bedrock:${data.aws_region.current.id}::foundation-model/*"
         ]
       }
     ]
