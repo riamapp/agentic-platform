@@ -197,6 +197,26 @@ resource "aws_s3_bucket_public_access_block" "student_feedback" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_cors_configuration" "student_feedback" {
+  bucket = aws_s3_bucket.student_feedback.id
+
+  cors_rule {
+    allowed_headers = [
+      "Content-Type",
+      "x-amz-date",
+      "x-amz-content-sha256",
+      "x-amz-security-token",
+      "x-amz-user-agent",
+      "x-amz-sdk-checksum-algorithm",
+      "Authorization",
+    ]
+    allowed_methods = ["GET", "PUT", "HEAD", "POST"]
+    allowed_origins = ["*"] # In production, restrict this to your frontend domain (e.g., ["https://yourdomain.com"])
+    expose_headers  = ["ETag", "x-amz-request-id"]
+    max_age_seconds = 3000
+  }
+}
+
 # Note: Individual student buckets (e.g., student-12345) should be created
 # either manually or through a separate process. The accordo_audio_feedback_tool
 # will work with any bucket name that matches the pattern stored in the

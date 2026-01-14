@@ -39,33 +39,30 @@ def _get_user_id_from_event(event: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-def _get_student_id_from_preferences(user_id: str) -> Optional[str]:
+def _get_student_id_from_user(user_id: str, claims: Dict[str, Any]) -> str:
     """
-    Get student_id from user preferences DynamoDB table.
+    Get student_id from the authenticated user.
+    
+    Priority:
+    1. Check Cognito custom attribute 'custom:student_id' (if configured)
+    2. Use user_id directly as student_id (for students, user_id is their identifier)
     
     Args:
         user_id: Cognito user ID (sub claim)
+        claims: Full Cognito claims dictionary
         
     Returns:
-        student_id if found, None otherwise
+        student_id (always returns a value, using user_id as fallback)
     """
-    if not PREFERENCES_TABLE_NAME:
-        raise ValueError("PREFERENCES_TABLE_NAME environment variable is not set")
-    
-    try:
-        table = dynamodb.Table(PREFERENCES_TABLE_NAME)
-        response = table.get_item(Key={"user_id": user_id})
-        
-        if "Item" not in response:
-            return None
-        
-        item = response["Item"]
-        # Get student_id from the item (may not be in Pydantic model but stored in DynamoDB)
-        student_id = item.get("student_id")
+    # First, check for custom attribute in Cognito claims
+    # Custom attributes in Cognito are prefixed with 'custom:'
+    student_id = claims.get("custom:student_id")
+    if student_id:
         return student_id
-    except ClientError as e:
-        print(f"Error querying preferences table: {e}")
-        raise
+    
+    # Fallback: use user_id as student_id
+    # For students, their Cognito user_id should be their student identifier
+    return user_id
 
 
 def _validate_path_belongs_to_student(path: str, student_id: str) -> bool:
@@ -327,18 +324,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "body": json.dumps({"error": "Unauthorized: user ID not found in request"}),
         }
     
-    # Get student_id from user preferences
+    # Get student_id from authenticated user
+    # Try custom attribute first, then fall back to user_id
     try:
-        student_id = _get_student_id_from_preferences(user_id)
-        if not student_id:
-            return {
-                "statusCode": 404,
-                "headers": {
-                    "Access-Control-Allow-Origin": "*",
-                    "Content-Type": "application/json",
-                },
-                "body": json.dumps({"error": "Student ID not found in user preferences"}),
-            }
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+        student_id = _get_student_id_from_user(user_id, claims)
+        print(f"DEBUG: Using student_id={student_id} for user_id={user_id}")
     except Exception as e:
         print(f"Error getting student_id: {e}")
         return {

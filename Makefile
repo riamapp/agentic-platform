@@ -187,11 +187,6 @@ $(FEEDBACK_LAMBDA_ZIP): api/feedback/feedback_handler.py api/feedback/requiremen
 	@echo "Building Feedback Lambda package..."
 	@mkdir -p $(BUILD_DIR)
 	@rm -rf $(FEEDBACK_BUILD_DIR) $(FEEDBACK_LAMBDA_ZIP)
-# Build Music Analysis Lambda package
-$(MUSIC_ANALYSIS_LAMBDA_ZIP): api/music_analysis/music_analysis_handler.py api/music_analysis/requirements.txt
-	@echo "Building Music Analysis Lambda package..."
-	@mkdir -p $(BUILD_DIR)
-	@rm -rf $(MUSIC_ANALYSIS_BUILD_DIR) $(MUSIC_ANALYSIS_LAMBDA_ZIP)
 	docker run --rm --platform linux/amd64 --entrypoint /bin/bash \
 		-v "$(PWD):/var/task" \
 		public.ecr.aws/lambda/python:3.12 \
@@ -203,6 +198,16 @@ $(MUSIC_ANALYSIS_LAMBDA_ZIP): api/music_analysis/music_analysis_handler.py api/m
 		    find $(FEEDBACK_BUILD_DIR) -type d -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true; \
 		    find $(FEEDBACK_BUILD_DIR) -type f -name '*.pyc' -delete 2>/dev/null || true; \
 		    cd $(FEEDBACK_BUILD_DIR) && zip -q -r /var/task/$(FEEDBACK_LAMBDA_ZIP) ."
+
+# Build Music Analysis Lambda package
+$(MUSIC_ANALYSIS_LAMBDA_ZIP): api/music_analysis/music_analysis_handler.py api/music_analysis/requirements.txt
+	@echo "Building Music Analysis Lambda package..."
+	@mkdir -p $(BUILD_DIR)
+	@rm -rf $(MUSIC_ANALYSIS_BUILD_DIR) $(MUSIC_ANALYSIS_LAMBDA_ZIP)
+	docker run --rm --platform linux/amd64 --entrypoint /bin/bash \
+		-v "$(PWD):/var/task" \
+		public.ecr.aws/lambda/python:3.12 \
+		-c "yum install -y zip >/dev/null 2>&1 || microdnf install -y zip >/dev/null 2>&1 || true; \
 		    mkdir -p $(BUILD_DIR) $(MUSIC_ANALYSIS_BUILD_DIR); \
 		    cp api/music_analysis/music_analysis_handler.py $(MUSIC_ANALYSIS_BUILD_DIR)/; \
 		    pip install -r api/music_analysis/requirements.txt -t $(MUSIC_ANALYSIS_BUILD_DIR) --upgrade --quiet; \
