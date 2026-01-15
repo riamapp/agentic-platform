@@ -1,8 +1,10 @@
 """
 MCP tool for retrieving audio feedback files from S3 for a student.
-Uses a single S3 bucket with student-specific prefixes (student-{id}/).
+Uses a single S3 bucket with student-specific prefixes (student-{cognito_sub}/feedback/).
+The Cognito sub is extracted from the authentication context, not passed by the client.
 """
 
+import json
 import logging
 import os
 from typing import Any, Dict, List
@@ -12,53 +14,61 @@ import boto3
 logger = logging.getLogger(__name__)
 
 
-def accordo_audio_feedback_tool(event: Dict[str, Any]) -> Dict[str, Any]:
+def accordo_audio_feedback_tool(event: Dict[str, Any], cognito_sub: str = None) -> Dict[str, Any]:
     """
     Retrieve audio feedback files from S3 for a student.
     
     Uses a single S3 bucket with student-specific prefixes. Lists all objects
-    under the student-{student_id}/ prefix, downloads each text file, and
+    under the student-{cognito_sub}/feedback/ prefix, downloads each text file, and
     returns the aggregated feedback.
     
+    The Cognito sub is extracted from the authentication context and used to
+    construct the S3 path prefix. The client does not need to pass the sub value.
+    
     Args:
-        event: Dictionary containing:
-            - student_id: (str, required) Numeric student ID
-            - userId: (str, automatically injected by Gateway)
+        event: Dictionary containing tool arguments (student_id is no longer required)
+        cognito_sub: (str, required) Cognito sub value extracted from auth context
     
     Returns:
         Dictionary with status_code and data/error keys.
         Data contains a list of feedback objects with file metadata and content.
     """
     try:
-        student_id = event.get("student_id")
-        
-        if not student_id:
+        # Validate event is a dictionary
+        if not isinstance(event, dict):
+            error_msg = f"Invalid event format - expected dictionary, got {type(event)}"
+            logger.error(error_msg)
             return {
-                "error": "student_id is required",
-                "errorType": "ValidationError"
+                "error": error_msg,
+                "errorType": "ValidationError",
+                "message": error_msg
             }
         
-        # Validate student_id is numeric
-        try:
-            int(student_id)
-        except (ValueError, TypeError):
+        # Validate cognito_sub is provided
+        if not cognito_sub:
+            error_msg = "Cognito sub is required but was not provided from authentication context. Please ensure you are authenticated."
+            logger.error(error_msg)
             return {
-                "error": f"student_id must be numeric, got: {student_id}",
-                "errorType": "ValidationError"
+                "error": error_msg,
+                "errorType": "AuthenticationError",
+                "message": error_msg
             }
         
         # Get bucket name from environment variable
         bucket_name = os.environ.get("S3_STUDENT_FEEDBACK_BUCKET")
         if not bucket_name:
+            error_msg = "S3_STUDENT_FEEDBACK_BUCKET environment variable is not configured"
+            logger.error(error_msg)
             return {
-                "error": "S3_STUDENT_FEEDBACK_BUCKET environment variable is not configured",
-                "errorType": "ConfigurationError"
+                "error": error_msg,
+                "errorType": "ConfigurationError",
+                "message": error_msg
             }
         
-        # Use student_id as prefix
-        prefix = f"student-{student_id}/"
+        # Use cognito_sub to construct the S3 prefix: /student-[cognito sub value]/feedback/
+        prefix = f"student-{cognito_sub}/feedback/"
         
-        logger.info(f"Listing objects in bucket {bucket_name} with prefix {prefix} for student_id: {student_id}")
+        logger.info(f"Listing objects in bucket {bucket_name} with prefix {prefix} for cognito_sub: {cognito_sub[:10]}...")
         
         # Initialize S3 client
         s3_client = boto3.client('s3')
@@ -72,24 +82,35 @@ def accordo_audio_feedback_tool(event: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
             if error_code == 'NoSuchBucket':
+                error_msg = f"S3 bucket {bucket_name} does not exist"
+                logger.error(error_msg)
                 return {
                     "status_code": 404,
-                    "error": f"S3 bucket {bucket_name} does not exist",
-                    "errorType": "NotFound"
+                    "error": error_msg,
+                    "errorType": "NotFound",
+                    "message": error_msg
                 }
-            logger.error(f"Error listing objects in S3: {e}", exc_info=True)
-            raise
+            error_msg = f"Error listing objects in S3: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                "error": error_msg,
+                "errorType": "S3Error",
+                "message": error_msg
+            }
         
         if 'Contents' not in response:
+            message = f"No feedback files found in bucket {bucket_name} with prefix {prefix}"
             return {
+                "status": "success",
                 "status_code": 200,
                 "data": {
-                    "student_id": student_id,
+                    "cognito_sub": cognito_sub,
                     "bucket_name": bucket_name,
                     "prefix": prefix,
                     "feedback_files": [],
-                    "message": f"No feedback files found in bucket {bucket_name} with prefix {prefix}"
-                }
+                    "message": message
+                },
+                "content": [{"text": message}]
             }
         
         # Process each object
@@ -124,22 +145,36 @@ def accordo_audio_feedback_tool(event: Dict[str, Any]) -> Dict[str, Any]:
                     "error": f"Failed to read file: {str(e)}"
                 })
         
-        logger.info(f"Retrieved {len(feedback_files)} feedback files for student_id: {student_id}")
+        logger.info(f"Retrieved {len(feedback_files)} feedback files for cognito_sub: {cognito_sub[:10]}...")
         
         return {
+            "status": "success",
             "status_code": 200,
             "data": {
-                "student_id": student_id,
+                "cognito_sub": cognito_sub,
                 "bucket_name": bucket_name,
                 "prefix": prefix,
                 "feedback_files": feedback_files,
                 "total_files": len(feedback_files)
-            }
+            },
+            "content": [{"text": json.dumps({
+                "cognito_sub": cognito_sub,
+                "bucket_name": bucket_name,
+                "prefix": prefix,
+                "feedback_files": feedback_files,
+                "total_files": len(feedback_files)
+            }, default=str)}]
         }
         
     except Exception as e:
+        error_msg = f"Error retrieving feedback: {str(e)}"
         logger.error(f"Error in accordo_audio_feedback_tool: {e}", exc_info=True)
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Traceback: {error_trace}")
         return {
-            "error": f"Error retrieving feedback: {str(e)}",
-            "errorType": "InternalError"
+            "error": error_msg,
+            "errorType": "InternalError",
+            "message": error_msg,
+            "details": str(e)
         }

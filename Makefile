@@ -40,7 +40,12 @@ help:
 	@echo "  music-analysis-lambda-zip       - Build Music Analysis Lambda package"
 	@echo "  lambda-zip                  - Build all Lambda packages (legacy)"
 	@echo "  all-lambda-zip              - Build all Lambda packages in parallel"
+	@echo "  view-mcp-logs APP_NAME=...  - View MCP Lambda CloudWatch logs (follow mode)"
+	@echo "  view-mcp-logs-recent APP_NAME=... - View recent MCP Lambda logs"
 	@echo "  clean                       - Remove all build artifacts"
+	@echo ""
+	@echo "Debugging:"
+	@echo "  ./scripts/check-mcp-logs.sh  - Analyze MCP Lambda logs for accordo tool issues"
 
 # Build all Lambda packages in parallel
 all-lambda-zip: $(MCP_LAMBDA_ZIP) $(JOB_SUBMIT_LAMBDA_ZIP) $(JOB_WORKER_LAMBDA_ZIP) $(JOB_GET_LAMBDA_ZIP) $(JOB_CANCEL_LAMBDA_ZIP) $(WEBSOCKET_CONNECT_LAMBDA_ZIP) $(WEBSOCKET_DISCONNECT_LAMBDA_ZIP) $(FEEDBACK_LAMBDA_ZIP)
@@ -244,5 +249,32 @@ clean-mcp:
 
 clean: clean-mcp clean-job-submit clean-job-worker clean-job-get clean-job-cancel clean-websocket-connect clean-websocket-disconnect clean-feedback
 clean: clean-mcp clean-job-submit clean-job-worker clean-job-get clean-job-cancel clean-websocket-connect clean-websocket-disconnect clean-music-analysis
+
+# View CloudWatch logs for MCP Lambda
+# Usage: make view-mcp-logs APP_NAME=your-app-name [MINUTES=10]
+# For AWS CLI v2: uses 'aws logs tail' (follow mode)
+# For AWS CLI v1: falls back to 'aws logs filter-log-events'
+view-mcp-logs:
+	@if [ -z "$(APP_NAME)" ]; then \
+		echo "Error: APP_NAME not set. Usage: make view-mcp-logs APP_NAME=your-app-name"; \
+		echo "You can also set MINUTES=30 to see more history (default: 10)"; \
+		exit 1; \
+	fi
+	@echo "Viewing CloudWatch logs for $(APP_NAME)-McpLambda (last $(or $(MINUTES),10) minutes)..."
+	@aws logs tail "/aws/lambda/$(APP_NAME)-McpLambda" --follow --format short --since $(or $(MINUTES),10)m 2>/dev/null || \
+	aws logs filter-log-events --log-group-name "/aws/lambda/$(APP_NAME)-McpLambda" --start-time $$(($$(date +%s) - $(or $(MINUTES),10) * 60))000 --format short 2>/dev/null || \
+	(echo "Error: Could not retrieve logs. Make sure AWS CLI is installed and configured." && exit 1)
+
+# View recent CloudWatch logs for MCP Lambda (last 10 minutes, no follow)
+view-mcp-logs-recent:
+	@if [ -z "$(APP_NAME)" ]; then \
+		echo "Error: APP_NAME not set. Usage: make view-mcp-logs-recent APP_NAME=your-app-name"; \
+		echo "You can also set MINUTES=30 to see more history (default: 10)"; \
+		exit 1; \
+	fi
+	@echo "Viewing recent CloudWatch logs for $(APP_NAME)-McpLambda (last $(or $(MINUTES),10) minutes)..."
+	@aws logs tail "/aws/lambda/$(APP_NAME)-McpLambda" --format short --since $(or $(MINUTES),10)m 2>/dev/null || \
+	aws logs filter-log-events --log-group-name "/aws/lambda/$(APP_NAME)-McpLambda" --start-time $$(($$(date +%s) - $(or $(MINUTES),10) * 60))000 2>/dev/null || \
+	(echo "Error: Could not retrieve logs. Make sure AWS CLI is installed and configured." && exit 1)
 	@# Clean up build directory if it's empty
 	@if [ -d "$(BUILD_DIR)" ] && [ -z "$$(ls -A $(BUILD_DIR) 2>/dev/null)" ]; then rmdir $(BUILD_DIR) 2>/dev/null || true; fi

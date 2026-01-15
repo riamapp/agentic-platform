@@ -103,7 +103,7 @@ resource "aws_iam_role_policy" "feedback_lambda_permissions" {
         Action = [
           "s3:PutObject"
         ]
-        Resource = "${aws_s3_bucket.student_feedback.arn}/student-*/upload/*"
+        Resource = "${aws_s3_bucket.student_feedback.arn}/student-*/uploads/*"
       }
     ]
   })

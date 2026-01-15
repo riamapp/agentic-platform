@@ -100,7 +100,7 @@ def _handle_upload_url(event: Dict[str, Any], student_id: str) -> Dict[str, Any]
     """
     Handle POST /feedback/upload-url request.
     
-    Generates a presigned URL for uploading a file to student-{id}/upload/
+    Generates a presigned URL for uploading a file to student-{id}/uploads/
     """
     try:
         # Handle empty or None body
@@ -128,8 +128,8 @@ def _handle_upload_url(event: Dict[str, Any], student_id: str) -> Dict[str, Any]
         # Sanitize filename (remove path components for security)
         safe_filename = os.path.basename(file_name)
         
-        # Generate S3 key
-        s3_key = f"student-{student_id}/upload/{safe_filename}"
+        # Generate S3 key - save to student-{id}/uploads/ prefix
+        s3_key = f"student-{student_id}/uploads/{safe_filename}"
         
         # Generate presigned URL
         upload_url = _generate_upload_url(S3_BUCKET_NAME, s3_key, content_type)
