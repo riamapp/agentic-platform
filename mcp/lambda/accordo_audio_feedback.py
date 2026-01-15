@@ -110,7 +110,7 @@ def accordo_audio_feedback_tool(event: Dict[str, Any], cognito_sub: str = None) 
                     "feedback_files": [],
                     "message": message
                 },
-                "content": [{"text": message}]
+                "content": [{"type": "text", "text": message}]
             }
         
         # Process each object
@@ -119,9 +119,9 @@ def accordo_audio_feedback_tool(event: Dict[str, Any], cognito_sub: str = None) 
         for obj in response['Contents']:
             key = obj['Key']
             
-            # Only process text files (adjust extension as needed)
-            if not (key.endswith('.txt') or key.endswith('.text')):
-                logger.debug(f"Skipping non-text file: {key}")
+            # Process text files and JSON files (feedback can be in either format)
+            if not (key.endswith('.txt') or key.endswith('.text') or key.endswith('.json')):
+                logger.debug(f"Skipping file with unsupported extension: {key}")
                 continue
             
             try:
@@ -130,11 +130,21 @@ def accordo_audio_feedback_tool(event: Dict[str, Any], cognito_sub: str = None) 
                 obj_response = s3_client.get_object(Bucket=bucket_name, Key=key)
                 content = obj_response['Body'].read().decode('utf-8')
                 
+                # Parse JSON content if it's a JSON file (to avoid double-encoding)
+                parsed_content = content
+                if key.endswith('.json'):
+                    try:
+                        parsed_content = json.loads(content)
+                        logger.debug(f"Parsed JSON content from {key}")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON content from {key}: {e}, using raw content")
+                        parsed_content = content
+                
                 feedback_files.append({
                     "file_name": key,
                     "size": obj['Size'],
                     "last_modified": obj['LastModified'].isoformat(),
-                    "content": content
+                    "content": parsed_content
                 })
             except Exception as e:
                 logger.warning(f"Failed to read file {key}: {e}")
@@ -157,7 +167,7 @@ def accordo_audio_feedback_tool(event: Dict[str, Any], cognito_sub: str = None) 
                 "feedback_files": feedback_files,
                 "total_files": len(feedback_files)
             },
-            "content": [{"text": json.dumps({
+            "content": [{"type": "text", "text": json.dumps({
                 "cognito_sub": cognito_sub,
                 "bucket_name": bucket_name,
                 "prefix": prefix,

@@ -259,7 +259,7 @@ def lambda_handler(event, context):
                         "message": error_msg,
                         "details": "The Cognito sub could not be extracted from the authentication context. This may indicate an issue with the authentication configuration. The Gateway may not be passing JWT claims to the Lambda function.",
                         "status": "error",
-                        "content": [{"text": error_msg}]
+                        "content": [{"type": "text", "text": error_msg}]
                     }
                     logger.error(f"Returning authentication error: {json.dumps(error_result, default=str)}")
                     # Return both formats to ensure compatibility
@@ -287,7 +287,7 @@ def lambda_handler(event, context):
                     if "status" not in result:
                         result["status"] = "error"
                     if "content" not in result:
-                        result["content"] = [{"text": error_msg}]
+                        result["content"] = [{"type": "text", "text": error_msg}]
                     
                     # Log the error with full details
                     logger.error(f"Tool returned error: {error_type} - {error_msg}")
@@ -310,8 +310,15 @@ def lambda_handler(event, context):
                         result["status"] = "success"
                     if "content" not in result and "data" in result:
                         # Convert data to content format for MCP client
-                        result["content"] = [{"text": json.dumps(result.get("data", {}), default=str)}]
-                return _response(200, {"result": result})
+                        result["content"] = [{"type": "text", "text": json.dumps(result.get("data", {}), default=str)}]
+                
+                # If result already has MCP format (status and content), return it directly
+                # Otherwise, wrap it in result key for _response() to process
+                if isinstance(result, dict) and "status" in result and "content" in result:
+                    logger.info("Result already has MCP format, returning directly")
+                    return result
+                else:
+                    return _response(200, {"result": result})
             except Exception as e:
                 import traceback
                 error_trace = traceback.format_exc()
@@ -340,7 +347,7 @@ def lambda_handler(event, context):
             "errorType": type(e).__name__,
             "message": error_msg,
             "status": "error",
-            "content": [{"text": error_msg}],
+            "content": [{"type": "text", "text": error_msg}],
             "details": error_trace
         }
 
@@ -479,8 +486,8 @@ def _response(status_code: int, body: Dict[str, Any]):
     Response formatter for Bedrock AgentCore Gateway MCP tools.
     
     Gateway MCP Lambda tools expect the response in MCP protocol format:
-    - Success: {"status": "success", "content": [{"text": "..."}]}
-    - Error: {"status": "error", "content": [{"text": "..."}]}
+    - Success: {"status": "success", "content": [{"type": "text", "text": "..."}]}
+    - Error: {"status": "error", "content": [{"type": "text", "text": "..."}]}
     
     The Gateway handles HTTP status codes, so we just return the body.
     """
@@ -497,7 +504,7 @@ def _response(status_code: int, body: Dict[str, Any]):
             error_msg = result.get("error") or result.get("message") or "Unknown error occurred"
             return {
                 "status": "error",
-                "content": [{"text": error_msg}],
+                "content": [{"type": "text", "text": error_msg}],
                 "error": error_msg,
                 "errorType": result.get("errorType", "Error")
             }
@@ -507,7 +514,7 @@ def _response(status_code: int, body: Dict[str, Any]):
             data = result["data"]
             return {
                 "status": "success",
-                "content": [{"text": json.dumps(data, default=str)}]
+                "content": [{"type": "text", "text": json.dumps(data, default=str)}]
             }
         
         # If result has status_code (from tool handlers), check if it's an error
@@ -517,7 +524,7 @@ def _response(status_code: int, body: Dict[str, Any]):
                 error_msg = result.get("error") or result.get("message") or "Unknown error occurred"
                 return {
                     "status": "error",
-                    "content": [{"text": error_msg}],
+                    "content": [{"type": "text", "text": error_msg}],
                     "error": error_msg,
                     "errorType": result.get("errorType", "Error")
                 }
@@ -526,13 +533,13 @@ def _response(status_code: int, body: Dict[str, Any]):
                 data = result.get("data", {})
                 return {
                     "status": "success",
-                    "content": [{"text": json.dumps(data, default=str)}]
+                    "content": [{"type": "text", "text": json.dumps(data, default=str)}]
                 }
         
         # Default: convert result to text
         return {
             "status": "success",
-            "content": [{"text": json.dumps(result, default=str)}]
+            "content": [{"type": "text", "text": json.dumps(result, default=str)}]
         }
     
     # Check if body has error directly
@@ -540,7 +547,7 @@ def _response(status_code: int, body: Dict[str, Any]):
         error_msg = body.get("error") or body.get("message") or "Unknown error occurred"
         return {
             "status": "error",
-            "content": [{"text": error_msg}],
+            "content": [{"type": "text", "text": error_msg}],
             "error": error_msg,
             "errorType": body.get("errorType", "Error")
         }
@@ -548,7 +555,7 @@ def _response(status_code: int, body: Dict[str, Any]):
     # Default: format as success
     return {
         "status": "success",
-        "content": [{"text": json.dumps(body, default=str)}]
+        "content": [{"type": "text", "text": json.dumps(body, default=str)}]
     }
 
 
